@@ -407,6 +407,174 @@ SHOW CREATE PROCEDURE sp_company_manutencao;
 
 ---
 
+# 👁️ Company Database — Views, Usuários e Triggers
+
+## Sobre este módulo
+
+Este módulo expande o projeto do banco `company` com três camadas de funcionalidade:
+
+- **Views** — consultas pré-definidas que simplificam o acesso a informações consolidadas
+- **Usuários** — controle de acesso baseado em função (*role-based*), garantindo que cada perfil veja apenas o que precisa
+- **Triggers** — regras de negócio automáticas disparadas pelo próprio banco, sem depender da aplicação
+
+---
+
+## Views criadas
+
+### `vw_employees_per_dept_location`
+Número de empregados agrupados por departamento **e** localidade. Usa `LEFT JOIN` entre departamento, localizações e funcionários para não omitir departamentos sem nenhum funcionário alocado em determinada cidade.
+
+```sql
+SELECT * FROM vw_employees_per_dept_location;
+```
+
+| dept_name | location | total_employees |
+|---|---|---|
+| Administration | Stafford | 3 |
+| Headquarters | Houston | 2 |
+| Research | Bellaire | 3 |
+| Research | Houston | 3 |
+| Research | Sugarland | 3 |
+
+---
+
+### `vw_departments_managers`
+Lista de departamentos com o nome completo do gerente e desde quando ele ocupa o cargo. Faz JOIN entre `departament` e `employee` pela coluna `Mgr_ssn`.
+
+```sql
+SELECT * FROM vw_departments_managers;
+```
+
+---
+
+### `vw_projects_employee_count`
+Ranking de projetos por número de funcionários alocados, incluindo total de horas. Útil para identificar projetos sobrecarregados ou sub-alocados.
+
+```sql
+SELECT * FROM vw_projects_employee_count;
+```
+
+---
+
+### `vw_projects_dept_managers`
+Cadeia completa: projeto → departamento responsável → gerente do departamento. Visão executiva para cruzar responsabilidades de projetos com a estrutura gerencial.
+
+```sql
+SELECT * FROM vw_projects_dept_managers;
+```
+
+---
+
+### `vw_employees_dependents_managers`
+Funcionários que possuem dependentes cadastrados, com a lista detalhada de cada dependente e um indicador (`SIM/NÃO`) se o funcionário é gerente de algum departamento. Usa `GROUP_CONCAT` para consolidar os dependentes em uma única linha por funcionário.
+
+```sql
+SELECT * FROM vw_employees_dependents_managers;
+```
+
+---
+
+## Tabela de auditoria: `employee_fired`
+
+Criada antes dos triggers. Espelha todas as colunas de `employee` e adiciona:
+
+| Coluna extra | Descrição |
+|---|---|
+| `id` | PK auto-increment |
+| `fired_at` | `DATETIME` do momento da exclusão |
+| `fired_by` | Usuário MySQL que executou o `DELETE` (via `USER()`) |
+
+Utiliza **InnoDB** (ao contrário do schema original em MyISAM) para garantir integridade transacional no histórico de demissões.
+
+---
+
+## Triggers
+
+### `trg_employee_salary_raise` — BEFORE UPDATE
+
+```
+Tabela : employee
+Evento : BEFORE UPDATE (FOR EACH ROW)
+Regra  : se NEW.Dno = 5 (Research), força NEW.Salary = OLD.Salary * 1.20
+```
+
+**Por que `OLD.Salary * 1.20` e não `NEW.Salary * 1.20`?**
+
+O valor de `NEW.Salary` no momento do `BEFORE UPDATE` já é o valor que veio do comando `UPDATE`. Se o reajuste fosse calculado sobre `NEW.Salary`, um `UPDATE` que já tentasse definir um valor maior poderia ter o percentual aplicado sobre um número diferente do salário real anterior. Usar `OLD.Salary` garante que **o reajuste é sempre 20% sobre o último salário registrado**, independentemente do que veio no `UPDATE`.
+
+```sql
+-- Exemplo: Franklin Wong ganha 42.000 → após UPDATE qualquer no dept 5
+UPDATE employee SET Address = '700-New-Addr-TX' WHERE Ssn = '333445555';
+-- Salary passa automaticamente para 50.400 (42000 * 1.20)
+```
+
+---
+
+### `trg_employee_archive_fired` — BEFORE DELETE
+
+```
+Tabela : employee
+Evento : BEFORE DELETE (FOR EACH ROW)
+Regra  : copia OLD.* para employee_fired antes da linha ser apagada
+```
+
+**Por que BEFORE e não AFTER?**
+
+Em MyISAM, `AFTER DELETE` funciona, mas em contextos com InnoDB e transações, usar `BEFORE` é mais seguro: se o `INSERT` na tabela de auditoria falhar, o `DELETE` também é bloqueado, garantindo que nenhum registro seja apagado sem antes ser arquivado.
+
+```sql
+-- Testar
+INSERT INTO employee VALUES ('Test','X','User','000000001','2000-01-01','1-Test','M',30000,NULL,5);
+DELETE FROM employee WHERE Ssn = '000000001';
+SELECT * FROM employee_fired; -- registro aparece aqui
+```
+
+---
+
+## Usuários e permissões
+
+A política aplicada é **privilégio mínimo**: cada usuário recebe apenas as permissões que sua função exige.
+
+### Mapa de acesso
+
+| Usuário | Perfil | Views | Tabelas | Procedure |
+|---|---|---|---|---|
+| `dept_manager` | Gerente de Depto | `vw_employees_per_dept_location`, `vw_departments_managers` | — | `EXECUTE` |
+| `hr_analyst` | Analista de RH | Todas exceto projetos | `employee` (CRUD), `dependent` (CRUD), `employee_fired` (leitura) | `EXECUTE` |
+| `project_manager` | Gerente de Projeto | `vw_projects_employee_count`, `vw_projects_dept_managers` | — | — |
+| `board_director` | Diretor | Todas as 5 views | — | — |
+| `benefits_analyst` | Analista de Benefícios | `vw_employees_dependents_managers` | `dependent` (leitura) | — |
+
+### Justificativa por perfil
+
+**`dept_manager`** — O gerente precisa ver o headcount do seu departamento por localidade e conhecer os outros gerentes para contato. Não precisa alterar dados diretamente nas tabelas, mas pode usar a procedure para ajustes dentro de seu escopo.
+
+**`hr_analyst`** — RH gerencia o ciclo completo do funcionário: admissão (INSERT), alterações (UPDATE) e desligamento (DELETE). Acessa o histórico de demitidos para rastreabilidade. Não acessa dados financeiros de projetos.
+
+**`project_manager`** — Só precisa enxergar alocação de pessoal por projeto e qual departamento/gerente é responsável. Sem acesso a dados pessoais ou salariais.
+
+**`board_director`** — Visão executiva de todas as informações consolidadas, sem permissão de modificação. Somente leitura em views garante que dados brutos não sejam expostos.
+
+**`benefits_analyst`** — Trabalha exclusivamente com dependentes para gestão de planos de saúde e benefícios. Acessa a tabela `dependent` diretamente para consultas detalhadas, sem ver salários.
+
+---
+
+Verificar objetos criados:
+
+```sql
+-- Views
+SHOW FULL TABLES IN company WHERE TABLE_TYPE = 'VIEW';
+
+-- Triggers
+SHOW TRIGGERS FROM company;
+
+-- Usuários
+SELECT user, host FROM mysql.user WHERE user IN
+  ('dept_manager','hr_analyst','project_manager','board_director','benefits_analyst');
+```
+
+---
+
 ## Tecnologias
 
 - MySQL 9.1 / phpMyAdmin 5.2.1
