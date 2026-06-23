@@ -575,6 +575,223 @@ SELECT user, host FROM mysql.user WHERE user IN
 
 ---
 
+# 🚗 Car Rent — Banco de Dados MySQL
+
+Projeto de estudo de banco de dados relacional para um sistema de aluguel de veículos, desenvolvido em MySQL. Abrange modelação de dados, transações, stored procedures, backup e recovery.
+
+---
+
+## 📁 Estrutura do Banco de Dados
+
+O banco `car_rent` é composto por 5 tabelas:
+
+| Tabela | Descrição |
+|---|---|
+| `clientes` | Dados dos clientes (nome, NCC, NIF) |
+| `marcas` | Marcas dos veículos (ex: Renault, Ford) |
+| `modelos` | Modelos associados a cada marca |
+| `veiculos` | Veículos disponíveis para aluguer (matrícula + modelo) |
+| `rent` | Registos de alugueres (cliente, veículo, datas) |
+
+### Diagrama de Relações
+
+```
+clientes ──< rent >── veiculos ──< modelos >── marcas
+```
+
+---
+
+## ⚙️ Configuração Inicial
+
+### Pré-requisito: Engine InnoDB
+
+O banco utiliza `InnoDB` para suporte completo a transações. O banco antes foi criado com `MyISAM`, então foi preciso converter com:
+
+```sql
+ALTER TABLE clientes ENGINE=InnoDB;
+ALTER TABLE marcas   ENGINE=InnoDB;
+ALTER TABLE modelos  ENGINE=InnoDB;
+ALTER TABLE veiculos ENGINE=InnoDB;
+ALTER TABLE rent     ENGINE=InnoDB;
+```
+
+> **Atenção:** O `MyISAM` ignora transações silenciosamente — `COMMIT` e `ROLLBACK` não têm efeito, por isso da conversão.
+
+---
+
+## 🔄 Transações
+
+As transações garantem que um conjunto de operações seja executado de forma atómica — ou tudo é confirmado, ou nada é aplicado.
+
+### Estrutura base
+
+```sql
+START TRANSACTION;
+
+    -- operações SQL
+
+COMMIT;   -- confirma tudo
+-- ou
+ROLLBACK; -- cancela tudo
+```
+
+### Uso de SAVEPOINT
+
+```sql
+START TRANSACTION;
+
+    INSERT INTO marcas (nome_marca) VALUES ('Toyota');
+    SAVEPOINT depois_da_marca;
+
+    INSERT INTO modelos (nome, marca_id) VALUES ('Corolla', LAST_INSERT_ID());
+    ROLLBACK TO depois_da_marca; -- desfaz só o modelo
+
+COMMIT; -- confirma apenas a marca
+```
+
+---
+
+## 🧩 Stored Procedure com Transaction
+
+Procedure que regista um novo aluguer verificando conflitos de disponibilidade do veículo:
+
+```sql
+DELIMITER $$
+
+CREATE PROCEDURE registrar_aluguel(
+    IN p_person_id    SMALLINT UNSIGNED,
+    IN p_veiculo_id   SMALLINT UNSIGNED,
+    IN p_data_inicio  DATE,
+    IN p_data_fim     DATE
+)
+BEGIN
+    DECLARE conflito INT DEFAULT 0;
+
+    DECLARE EXIT HANDLER FOR SQLEXCEPTION
+    BEGIN
+        ROLLBACK;
+        RESIGNAL;
+    END;
+
+    START TRANSACTION;
+
+        -- 1. Verificar disponibilidade do veículo
+        SELECT COUNT(*) INTO conflito
+        FROM rent
+        WHERE veiculo_id = p_veiculo_id
+          AND data_inicio < p_data_fim
+          AND data_fim    > p_data_inicio;
+
+        -- 2. Bloquear se houver conflito
+        IF conflito > 0 THEN
+            SIGNAL SQLSTATE '45000'
+                SET MESSAGE_TEXT = 'Veículo indisponível nesse período.';
+        END IF;
+
+        -- 3. Inserir o aluguer
+        INSERT INTO rent (data_inicio, data_fim, veiculo_id, person_id)
+        VALUES (p_data_inicio, p_data_fim, p_veiculo_id, p_person_id);
+
+    COMMIT;
+
+    SELECT 'Aluguel registado com sucesso.' AS resultado;
+END$$
+
+DELIMITER ;
+```
+
+### Como chamar
+
+```sql
+-- Sucesso
+CALL registar_aluguel(4, 3, '2026-08-01', '2026-08-05');
+
+-- Erro — veículo indisponível no período
+CALL registar_aluguel(1, 1, '2020-06-26', '2020-06-28');
+```
+
+### Gerir procedures
+
+```sql
+SHOW PROCEDURE STATUS WHERE Db = 'car_rent'; -- listar
+SHOW CREATE PROCEDURE registar_aluguel;       -- ver código
+DROP PROCEDURE IF EXISTS registar_aluguel;    -- apagar
+```
+
+![Recovery](Módulo5/imgs/procedure-sucesso.jpg)
+
+---
+
+## 💾 Backup
+
+O backup é feito na linha de comandos com `mysqldump`.
+
+```bash
+# Backup completo (estrutura + dados + procedures)
+mysqldump -u root -p --routines car_rent > backup_car_rent.sql
+
+# Só estrutura
+mysqldump -u root -p --no-data car_rent > estrutura_car_rent.sql
+
+# Só dados
+mysqldump -u root -p --no-create-info car_rent > dados_car_rent.sql
+
+# Tabela específica
+mysqldump -u root -p car_rent rent > backup_rent.sql
+
+# Backup comprimido
+mysqldump -u root -p --routines car_rent | gzip > backup_car_rent.sql.gz
+
+# Backup com data no nome
+mysqldump -u root -p car_rent > backup_$(date +%Y-%m-%d).sql
+```
+
+![Recovery](Módulo5/imgs/backup-cmd.jpg)
+
+---
+
+## ♻️ Recovery
+
+### Via linha de comandos (CMD)
+
+```bash
+# 1. Localizar a pasta com o ficheiro do backup
+
+# 2. Restaurar
+mysql -u root -p car_rent < backup_car_rent.sql
+
+![Recovery](Módulo5/imgs/recovery-cmd.jpg)
+
+```
+
+### Verificar o recovery
+
+```sql
+USE car_rent;
+SHOW TABLES;
+SELECT * FROM clientes;
+SELECT * FROM rent;
+```
+
+---
+
+## 🛠️ Tecnologias
+
+- MySQL 8+
+- MySQL Workbench
+- mysqldump (backup/recovery)
+- Engine InnoDB (transações)
+
+---
+
+## 📌 Conceitos Abordados
+
+- Modelação relacional com chaves primárias e estrangeiras
+- Transações ACID com `START TRANSACTION`, `COMMIT`, `ROLLBACK` e `SAVEPOINT`
+- Stored Procedures com parâmetros de entrada e tratamento de erros (`SIGNAL`, `EXIT HANDLER`)
+- Backup completo e parcial com `mysqldump`
+- Recovery via CMD e MySQL Workbench
+
 ## Tecnologias
 
 - MySQL 9.1 / phpMyAdmin 5.2.1
