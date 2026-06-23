@@ -51,12 +51,12 @@ AVG(): Calcula média
 MAX()/MIN(): Valor máximo/mínimo
 
 
-<img width="978" height="995" alt="e-commerce" src="https://github.com/user-attachments/assets/ce93ee00-0f7b-4a1a-8efe-5c47e6bd7bf3" />
+<img width="778" height="795" alt="e-commerce" src="https://github.com/user-attachments/assets/ce93ee00-0f7b-4a1a-8efe-5c47e6bd7bf3" />
 
 
 2. Oficina mecânica (Módulo 2 - Modelo de Dados Relacionais):
 
-<img width="982" height="875" alt="Oficina" src="https://github.com/user-attachments/assets/58b08f93-3f01-45aa-8839-99f946528fee" />
+<img width="782" height="675" alt="Oficina" src="https://github.com/user-attachments/assets/58b08f93-3f01-45aa-8839-99f946528fee" />
 
 # 🗄️ Company Database — Índices e Queries de Recuperação de Informação
 
@@ -718,7 +718,7 @@ SHOW CREATE PROCEDURE registar_aluguel;       -- ver código
 DROP PROCEDURE IF EXISTS registar_aluguel;    -- apagar
 ```
 
-![Recovery](Módulo5/imgs/procedure-sucesso.jpg)
+![Recovery](M%C3%B3dulo5/imgs/procedure-sucesso.jpg)
 
 ---
 
@@ -746,7 +746,7 @@ mysqldump -u root -p --routines car_rent | gzip > backup_car_rent.sql.gz
 mysqldump -u root -p car_rent > backup_$(date +%Y-%m-%d).sql
 ```
 
-![Recovery](Módulo5/imgs/backup-cmd.jpg)
+![Recovery](M%C3%B3dulo5/imgs/backup-cmd.jpg)
 
 ---
 
